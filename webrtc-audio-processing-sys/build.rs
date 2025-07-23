@@ -4,7 +4,13 @@ use std::{env, path::PathBuf};
 const DEPLOYMENT_TARGET_VAR: &str = "MACOSX_DEPLOYMENT_TARGET";
 
 fn out_dir() -> PathBuf {
-    std::env::var("OUT_DIR").expect("OUT_DIR environment var not set.").into()
+    // Windows has a long pathname limit, so we use a shorter path
+    // for the output directory to avoid issues with long paths.
+    if cfg!(target_os = "windows") {
+        PathBuf::from("C:/temp/webrtc-audio/out")
+    } else {
+        std::env::var("OUT_DIR").expect("OUT_DIR environment var not set.").into()
+    }
 }
 
 fn src_dir() -> PathBuf {
@@ -22,14 +28,8 @@ mod webrtc {
     pub(super) fn get_build_paths() -> Result<(Vec<PathBuf>, Vec<PathBuf>)> {
         let (pkgconfig_include_path, pkgconfig_lib_path) = find_pkgconfig_paths()?;
 
-        let include_path = std::env::var("WEBRTC_AUDIO_PROCESSING_INCLUDE")
-            .ok()
-            .map(PathBuf::from)
-            .or(pkgconfig_include_path);
-        let lib_path = std::env::var("WEBRTC_AUDIO_PROCESSING_LIB")
-            .ok()
-            .map(PathBuf::from)
-            .or(pkgconfig_lib_path);
+        let include_path = std::env::var("WEBRTC_AUDIO_PROCESSING_INCLUDE").ok().map(PathBuf::from);
+        let lib_path = std::env::var("WEBRTC_AUDIO_PROCESSING_LIB").ok().map(PathBuf::from);
 
         if include_path.is_none() || lib_path.is_none() {
             bail!(
@@ -119,21 +119,37 @@ mod webrtc {
 
         let webrtc_build_dir = build_dir.join(BUNDLED_SOURCE_PATH);
         let mut meson = Command::new("meson");
-        let status = meson
+        meson
             .args(&["setup", "--prefix", install_dir.to_str().unwrap()])
+            .arg("--reconfigure")
             .arg("-Ddefault_library=static")
             .arg(BUNDLED_SOURCE_PATH)
-            .arg(webrtc_build_dir.to_str().unwrap())
-            .status()
-            .context("Failed to execute meson. Do you have it installed?")?;
+            .arg("-Dcpp_std=c++20") // <- Set correct C++ standard
+            .arg(webrtc_build_dir.to_str().unwrap());
+        if cfg!(target_os = "windows") {
+            meson.arg("--vsenv");
+        };
+        let status =
+            meson.status().context("Failed to execute meson. Do you have it installed?")?;
         assert!(status.success(), "Command failed: {:?}", &meson);
 
-        let mut ninja = Command::new("ninja");
-        let status = ninja
-            .current_dir(&webrtc_build_dir)
-            .status()
-            .context("Failed to execute ninja. Do you have it installed?")?;
-        assert!(status.success(), "Command failed: {:?}", &ninja);
+        if cfg!(target_os = "windows") {
+            let mut meson = Command::new("meson");
+            let status = meson
+                .arg("compile")
+                .arg("-C")
+                .arg(&webrtc_build_dir)
+                .status()
+                .context("Failed to execute ninja. Do you have it installed?")?;
+            assert!(status.success(), "Command failed: {:?}", &meson);
+        } else {
+            let mut ninja = Command::new("ninja");
+            let status = ninja
+                .current_dir(&webrtc_build_dir)
+                .status()
+                .context("Failed to execute ninja. Do you have it installed?")?;
+            assert!(status.success(), "Command failed: {:?}", &ninja);
+        }
 
         let mut install = Command::new("ninja");
         let status = install
@@ -187,19 +203,28 @@ fn main() -> Result<()> {
         cc_build.flag(&format!("-mmacos-version-min={}", min_version));
     }
 
+    if cfg!(target_os = "windows") {
+        // On Windows, we need to link against the C++ standard library.
+        cc_build.flag("/EHsc");
+        cc_build.flag("/DWEBRTC_WIN");
+        cc_build.flag("/std:c++17");
+    } else {
+        cc_build.flag("-std=c++17");
+    }
+
     cc_build
         .cpp(true)
         .file("src/wrapper.cpp")
         .includes(&include_dirs)
-        .flag("-std=c++17")
-        .flag("-Wno-unused-parameter")
-        .flag("-Wno-deprecated-declarations")
         .out_dir(&out_dir())
         .compile("webrtc_audio_processing_wrapper");
 
     println!("cargo:rustc-link-lib=static=webrtc_audio_processing_wrapper");
 
-    let binding_file = out_dir().join("bindings.rs");
+    // Bindings should be generated at the proper out directory, not short version for Windows.
+    let binding_file: PathBuf =
+        std::env::var("OUT_DIR").expect("OUT_DIR environment var not set.").into();
+    let binding_file = binding_file.join("bindings.rs");
     let mut builder = bindgen::Builder::default()
         .header("src/wrapper.hpp")
         .clang_args(&["-x", "c++", "-std=c++17", "-fparse-all-comments"])

@@ -6,7 +6,7 @@
 #define WEBRTC_APM_DEBUG_DUMP 0
 #define WEBRTC_POSIX
 #include "webrtc/modules/audio_processing/aec3/echo_canceller3.h"
-
+#include <stdexcept>
 #include <algorithm>
 #include <memory>
 #include <optional>
