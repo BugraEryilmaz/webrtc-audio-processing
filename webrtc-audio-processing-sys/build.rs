@@ -13,6 +13,7 @@ fn out_dir() -> PathBuf {
     }
 }
 
+#[cfg(feature = "bundled")]
 fn src_dir() -> PathBuf {
     std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR environment var not set.").into()
 }
@@ -26,7 +27,7 @@ mod webrtc {
     const LIB_MIN_VERSION: &str = "2.0";
 
     pub(super) fn get_build_paths() -> Result<(Vec<PathBuf>, Vec<PathBuf>)> {
-        let (pkgconfig_include_path, pkgconfig_lib_path) = find_pkgconfig_paths()?;
+        let (_pkgconfig_include_path, _pkgconfig_lib_path) = find_pkgconfig_paths()?;
 
         let include_path = std::env::var("WEBRTC_AUDIO_PROCESSING_INCLUDE").ok().map(PathBuf::from);
         let lib_path = std::env::var("WEBRTC_AUDIO_PROCESSING_LIB").ok().map(PathBuf::from);
